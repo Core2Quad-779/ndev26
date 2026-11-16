@@ -1,49 +1,117 @@
-# Burning a Wii game to DVD
+# Making a Wii game disc from your own game
 
-A short guide to making a burned DVD that boots on a Wii. It assumes you're backing up discs you own. Sources and the longer notes are in [research-notes.md](research-notes.md).
+This is for a game **you build**, played on a **softmodded** Wii. It covers compiling your
+game to a disc image, fakesigning it, burning it, and launching it. The background on why a
+stock console won't touch it, and why you can't sign it for real, is in
+[research-notes.md](research-notes.md).
 
-## Check your drive first
+The short version of the hard truth: there is no way to make a disc that boots on an
+untouched Wii. Signing needs Nintendo's private key, which nobody has. The route below works
+only because the softmod reinstalls the old "trucha" signature bug, so a *fakesigned* disc is
+accepted. The softmod is the thing doing the heavy lifting, not the signature.
 
-Whether your Wii can read a burned disc depends on the DVD drive inside it. Software can't change this.
+## Two walls that the softmod does not remove
 
-| Drive | Reads burned DVD-R? |
-|---|---|
-| DMS, D2A, D2B, D2C, D2C2, D2E | Yes, after softmod |
-| D3 (early, Dec 2008) | Yes, after softmod |
-| D3-2, D4 (mid-2009 onward) | No |
-| Wii U (vWii), Wii mini | No |
+1. **The drive has to physically read DVD-R.** Only pre-D3-2 drives do, which in practice
+   means white Wiis made before about mid-2009. A D3-2 or newer drive (every black/red/blue
+   Wii, RVL-101, RVL-201, Wii mini, Wii U) cannot read a burned disc no matter what software
+   you run. If that's your console, skip the disc and load the same `.dol` from SD or USB
+   instead. Same build, no burning.
+2. **The console must already be softmodded with d2x cIOS.** That's the premise here. Follow
+   [wii.hacks.guide](https://wii.hacks.guide/) if it isn't done yet. The cIOS is what carries
+   the trucha bug that makes a fakesigned disc boot.
 
-Rough ways to tell:
+## Test in Dolphin first
 
-- Black, red and blue Wiis, and the later RVL-101 and RVL-201 models, have D3-2 or newer drives. They won't read burned discs.
-- White launch-era Wiis (RVL-001, 2006 to 2008) usually have a readable drive. Approximate serial cutoffs for D3-2 are LU7012xxxxx / LU3941xxxxx (US), LEF1128xxxxx (EU), LEH2682xxxxx (UK) and LAH1167xxxxx (AU). Serials below those are probably fine.
-- A Wii could have had its drive swapped during a repair, so the serial isn't proof. Burning one disc and trying it in USB Loader GX is the real test.
-
-If you have a D3-2 or newer, skip discs and load games from a USB drive with USB Loader GX. You can also swap in an older drive (D2B or D2C are easy to find), because every Wii drive fits every Wii.
+Before you burn anything, run the composed `.iso` (built below) in
+[Dolphin](https://dolphin-emu.org/). It loads your image directly, no burning and no console,
+and it's the fastest way to catch a broken build. Burn only once it runs there.
 
 ## What you need
 
-- A Wii with a readable drive (see above)
-- An SD card, FAT32
-- Blank **DVD-R** discs, Verbatim or another good brand. Single-layer covers most games. A few dual-layer games (Smash Bros. Brawl, Xenoblade, Metroid Prime Trilogy) need DL discs, and burned DL discs are hit or miss on the Wii, so USB is the safer route for those.
-- A PC with a DVD burner and ImgBurn (Windows) or `growisofs` (Linux)
+- Your game compiled to a `main.dol` (devkitPPC + libogc; `elf2dol` produces the `.dol`)
+- [Wiimms ISO Tools](https://wit.wiimm.de/) (`wit`) to build and fakesign the disc image
+- The open-source apploader template:
+  [composing-template.zip](https://wit.wiimm.de/download/composing-template.zip)
+- A softmodded Wii with d2x cIOS and USB Loader GX
+- A Wii with a pre-D3-2 drive (see wall #1)
+- Blank **DVD-R** (Verbatim or similar), and ImgBurn (Windows) or `growisofs` (Linux)
 
 ## Steps
 
-1. **Softmod the Wii.** Follow [wii.hacks.guide](https://wii.hacks.guide/). It installs the Homebrew Channel, BootMii and Priiloader, has you make a NAND backup, and installs d2x cIOS. Don't skip the NAND backup.
-2. **Install a loader.** Put USB Loader GX on the SD card (`/apps/usbloader_gx/`). WiiFlow also works.
-3. **Dump your game.** Run CleanRip from the Homebrew Channel with the original disc in the drive. It writes a `.iso` to SD or USB. Don't burn `.wbfs` or `.rvz` files. Convert them back to `.iso` first with Dolphin or wit.
-4. **Burn the ISO.**
-   - ImgBurn: Mode > Write, pick the ISO, set write speed to 4x or lower (2x is better), and turn on Verify.
-   - Linux: `growisofs -dvd-compat -speed=2 -Z /dev/sr0=game.iso`
-   - Burn the ISO as an image. Don't add it as a file to a data disc.
-   - If you're stuck with DVD+R, set the book type to DVD-ROM (ImgBurn has a book type button in the lower right of the write screen). Your burner has to support bitsetting for this to work.
-5. **Play it.** Put the burned disc in the Wii, open USB Loader GX, and click the disc icon in the top right. The Disc Channel won't boot burned discs on its own.
+### 1. Build your game to a `.dol`
+
+Compile with devkitPPC and libogc. The output you want is `main.dol`. This is your whole game;
+everything else below just wraps it in a disc the Wii understands.
+
+### 2. Lay out the project directory
+
+Unzip the composing template and drop your game in. The layout `wit` expects:
+
+```
+mygame/
+  sys/
+    main.dol        <- YOUR game's .dol goes here (replace the template's)
+    apploader.img   <- open-source apploader, from the template, leave as-is
+    boot.bin        <- from the template
+    bi2.bin         <- from the template
+  files/            <- any assets your game reads off the disc
+  ticket.bin        <- template; wit rewrites and fakesigns it
+  tmd.bin           <- template; wit rewrites and fakesigns it
+  cert.bin          <- template cert chain
+```
+
+Put data files your game loads at runtime under `files/`.
+
+### 3. Compose and fakesign the disc image
+
+```
+wit copy ./mygame ./mygame.iso --id HBDE --name "My Game" --region USA --ios 58
+```
+
+- `--id` is a 4-character game ID. The **4th letter is the region**: `E` = NTSC-U, `P` = PAL,
+  `J` = Japan. Match it to `--region` or the console gets confused.
+- `--ios` sets the IOS your game asks for. Use the IOS your game is built against (58 is a
+  common choice with USB networking). The raw template defaults to something odd (IOS 21,
+  near-Europe ID), so always set these two yourself.
+- `wit` builds the content hash tree and **trucha-signs** the ticket and TMD for you.
+
+Confirm it worked:
+
+```
+wit verify ./mygame.iso
+```
+
+A good build reports `TICKET & TMD are fake signed. Partition is encrypted.` and `+OK`. The
+image comes out at single-layer size (about 4.5 GiB), padded, which is exactly what fits on a
+DVD-R.
+
+### 4. Burn to DVD-R
+
+Burn `mygame.iso` **as a disc image**, not as a file on a data disc.
+
+- ImgBurn: Mode > Write, pick the `.iso`, set speed to 4x or lower (2x is safer), Verify on.
+- Linux: `growisofs -dvd-compat -speed=2 -Z /dev/sr0=mygame.iso`
+
+### 5. Launch it
+
+Put the disc in the softmodded Wii, open **USB Loader GX**, and click the disc/DVD icon (top
+right). It reads and boots the disc through cIOS, whose trucha-patched check accepts your
+fakesigned ticket and TMD. The normal Disc Channel will **not** boot it, because it uses the
+stock, unpatched IOS.
 
 ## If it doesn't boot
 
-- Make sure d2x cIOS installed. If USB Loader GX can't load the disc from the disc button, nothing else will, and the drive is the likely problem.
-- Burn again at a slower speed on better media.
-- Old loaders like NeoGamma work for older games but fail on many newer ones. Stick with USB Loader GX.
+- Runs in Dolphin but not on the Wii? Almost always the drive (wall #1) or the burn. Try
+  slower speed and better media, and confirm the drive is pre-D3-2.
+- Loader can't see the disc at all: check d2x cIOS is installed and USB Loader GX's loader IOS
+  is set to the cIOS slot (usually 249).
+- Wrong region or a black screen on boot: recheck `--id` 4th letter against `--region`, and
+  that `--ios` points at an IOS the console actually has.
 
-Honest recommendation: unless you specifically want discs, USB loading is simpler. It works on every Wii, loads faster and doesn't wear out the drive.
+## Simpler alternative: run the `.dol` without a game disc
+
+If you don't specifically need a disc that looks like a real Wii game, skip all of the above.
+Put your build at `/apps/mygame/boot.dol` on an SD card or USB drive and launch it from the
+Homebrew Channel. No fakesigning, no DVD-R, works on every softmodded Wii including D3-2 ones.
+The disc is the hard way; this is how homebrew normally ships.

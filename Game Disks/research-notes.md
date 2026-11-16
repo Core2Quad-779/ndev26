@@ -1,61 +1,127 @@
 # Research notes
 
-Notes collected while writing [README.md](README.md), November 2026. Most of this is community knowledge from forums and hobbyist wikis, not official documentation. Where sources disagree, I say so.
+Background for [README.md](README.md). Collected November 2026. Much of this is community
+knowledge from forums and hobbyist wikis, not official documentation. Where sources disagree I
+say so. The signing section is the important part, because it decides what's possible.
 
-## Why some Wiis can read DVD-R and others can't
+## Why you can't sign a disc for a stock Wii
 
-Early in development the Wii was going to play DVD movies, so the early drives kept a standard DVD read mode. Softmod loaders and drive-key modchips both use that mode to read burned discs.
+Wii disc authentication is a four-level RSA chain of trust:
 
-Nintendo removed it in the D3-2 revision (around mid-2009). The D3-2 can't read burned DVD±R at all, and modchips don't fix it according to most posts. The D4 and the Wii U drive behave the same way. The only fixes are USB loading or a drive swap.
+1. **Root** key pair (RSA-4096). The public half is burned into every console. The private
+   half never left Nintendo and was never cracked or leaked.
+2. Root signs a **CA** certificate (RSA-2048).
+3. CA signs the working certs: an **XS** cert (signs tickets) and a **CP** cert (signs TMDs).
+4. Each game's **ticket** and **TMD** are signed by those certs.
 
-Drive history:
+A disc carries the content, the ticket, the TMD, and the XS/CP certs so the console can verify
+the chain. The content is encrypted with a per-disc **title key** (AES), which is itself
+wrapped with the **common key**. The common key is symmetric and leaked years ago, so
+encrypting content correctly is not the problem. The RSA signatures are.
 
-- **DMS, D2A.** Launch drives.
-- **D2B.** Early 2007.
-- **D2C, D2C2.** D2C broke every modchip of its time. D2C2 (May 2008) looks identical but needed updated chips.
-- **D2E.** Late 2008, similar to D2C2.
-- **D3 ("D2Nothing").** December 2008. Merged the D2x chip into the main controller and removed the debug port that modchips used. Still has DVD mode, so burned discs work.
-- **D3-2.** Looks like D3, but the top of the big chip is blank. No DVD mode.
-- **D4.** Later revision, also no DVD mode.
+To sign your own disc you'd need a Nintendo private key. Recovering one from the public key
+means factoring a 2048-bit modulus, which is infeasible. More data does not help:
 
-How to identify the drive:
+- **Collecting more games** gives you more public certs (verify-only) and more signatures bound
+  to other games' bytes. No signing key is ever on a disc.
+- **Dumping keys from consoles** gives per-console ECC private keys. Each was signed *by*
+  Nintendo; you can't run a signature backwards to recover the signer's key.
+- **Reusing another game's signature** (e.g. Mario Kart's) fails because a signature is bound
+  to the exact bytes it covers. Change the TMD to list your content and the signature no longer
+  matches; keep the signature valid and the disc must stay byte-identical to Mario Kart.
 
-- Open the console. The first line on the drive chip starts with `GC2` or `GC2R` and ends with the revision (D2A, D2B, ...).
-- Approximate D3-2 serial cutoffs from AfterDawn: US/Canada LU7012xxxxx and LU3941xxxxx, EU LEF1128xxxxx, UK LEH2682xxxxx, AU LAH1167xxxxx. One GBAtemp post gave "Lah1162" for AU, so treat the numbers as rough.
-- Any black, red or blue Wii, and every RVL-101 and RVL-201, has a D3-2 or newer. One forum post says a `C/RVL-...-1` label means a newer drive.
-- wiidrives.com has a serial lookup and drive list.
-- Repaired consoles may have a different drive than the serial suggests.
+The one console signing key ever recovered was Sony's PS3 ECDSA key, and only because Sony
+reused the same nonce on every signature. That's an ECDSA implementation blunder; Nintendo's
+RSA scheme doesn't have that weakness. Sources:
+[WiiBrew: Signing bug](https://wiibrew.org/wiki/Signing_bug),
+[fail0verflow 25c3 "Wii Fail"](https://marcan.st/uploads/25c3_console_hacking/).
 
-## Media and burning
+## What "fakesign" actually is
 
-- WiiBrew's DVDx page recommends DVD-R because its reflectivity is closest to a pressed DVD. Cheap brands can fail, and drives differ.
-- DVD+R and DVD+RW need book type set to DVD-ROM for software loading. That requires a burner that supports bitsetting. With a modchip, DVD+R reportedly works without it.
-- Avoid RW discs.
-- Forum consensus on speed is 4x maximum. Several posts say 2x.
-- Verbatim gets recommended most often.
+The homebrew scene never got the private key. Instead it found a verification bug: Nintendo
+compared signature hashes with `strncmp`, which stops at the first null byte. Craft a hash that
+collides in the first byte and the check passes with a bogus signature. That's the **trucha
+bug**. It's fixed in retail IOS (IOS30/IOS37 era onward), so fakesigned discs are rejected by
+an up-to-date console. The scene reinstalls the buggy check as a **cIOS** (e.g. slot 249 via
+d2x). That reinstall is the softmod, and it's the only reason a fakesigned disc boots.
+Source: [ConsoleMods: The Signing Bug](https://consolemods.org/wiki/Wii:The_Signing_Bug).
 
-## Software
+## What happens when you insert a disc
 
-- **wii.hacks.guide.** The current softmod guide. Exploits by console: Wilbrand (SD card) or str2hax (no SD) on a regular Wii, Bluebomb on Wii mini, a Wii U-side exploit for vWii, and ModMii for a guided Windows setup. HackMii installs the Homebrew Channel and BootMii, then Priiloader and d2x cIOS. The guide warns against cIOS packs like DARKCORP.
-- **d2x cIOS.** Patched IOS that lets loaders access the DVD drive and USB.
-- **USB Loader GX.** Main recommendation. Disc icon in the top right launches a burned disc.
-- **NeoGamma R9.** Older disc loader. Works for older games, fails on many newer ones.
-- **uLoader 5.1x.** Can read a burned disc from an external USB DVD drive, which gets around the D3-2 limit. Old and less maintained.
-- **CleanRip.** Dumps your own Wii and GameCube discs to ISO.
+1. System Menu reads the disc header and confirms the Wii magic word.
+2. It reads the TMD for the required IOS and reloads into it. The **ES** module in that IOS
+   does the crypto.
+3. ES verifies the cert chain (XS/CP against CA, CA against the burned-in Root), then the
+   ticket signature and the TMD signature.
+4. On pass, ES unwraps the title key with the common key.
+5. The apploader loads content, each block checked against the TMD's hash tree and decrypted
+   with the title key.
+6. `main.dol` runs.
+
+A homemade disc dies at step 3 on stock IOS (forged signature rejected), or earlier at the
+drive if it can't read DVD-R. A cIOS swaps ES's real check for the trucha version, so step 3
+waves the fakesign through.
+
+## Building the disc (verified on this box)
+
+`wit` (Wiimms ISO Tools) composes a Wii disc image from an extracted file system and fakesigns
+it. Verified with wit v3.05a using the open-source apploader template:
+
+```
+wit copy ./mygame ./mygame.iso --id HBDE --name "My Game" --region USA --ios 58
+wit verify ./mygame.iso
+# -> TICKET & TMD are fake signed. Partition is encrypted.   +OK
+```
+
+Required project layout: `sys/main.dol`, `sys/apploader.img`, `sys/boot.bin`, `sys/bi2.bin`,
+`files/`, plus `ticket.bin` / `tmd.bin` / `cert.bin` (wit rewrites and fakesigns the ticket and
+TMD). `sys/bi2.bin` is optional since wit v3.05a. Output is a single-layer-sized (~4.5 GiB)
+encrypted, fakesigned image.
+
+The template is the open-source apploader by bushing (GC-Linux derived), bundled as
+[composing-template.zip](https://wit.wiimm.de/download/composing-template.zip). Original post:
+[hackmii.com open-source apploader / ISO template](http://hackmii.com/2008/08/open-source-apploader-iso-template/).
+marcan's note there: "this is just a base image that can be used to run homebrew from DVD."
+
+## Drive compatibility (the hardware wall)
+
+Early Wiis kept a DVD read mode from a cancelled DVD-video feature; softmod loaders and
+modchips use it to read burned discs. Nintendo removed it in the D3-2 revision (mid-2009).
+
+| Drive | Reads burned DVD-R after softmod? |
+|---|---|
+| DMS, D2A, D2B, D2C, D2C2, D2E, early D3 (Dec 2008) | Yes |
+| D3-2, D4 | No |
+| Wii mini, Wii U (vWii) | No |
+
+Telling them apart: the drive chip's first line ends in the revision (`D2A`, `D2B`, ...). D3-2
+looks like D3 but the top of the big chip is blank. Approximate D3-2 serial cutoffs (AfterDawn,
+treat as rough): US LU7012xxxxx / LU3941xxxxx, EU LEF1128xxxxx, UK LEH2682xxxxx, AU
+LAH1167xxxxx. Black/red/blue Wiis and all RVL-101/201 are D3-2 or newer. A repaired console may
+have a swapped drive, so the real test is burning one disc and trying it.
+
+If the drive can't read DVD-R, load the same `.dol` from SD/USB instead. Every Wii drive fits
+every Wii, so an older drive swap is also possible.
+
+## Alternative disc routes
+
+- **Homebrew Disc Loader** (WiiBrew): burn a plain ISO9660 data DVD with `boot.dol` files in
+  per-app folders, launch the loader from HBC, it reads them. Needs DVDx and a DVD-R-capable
+  drive. Simpler than a real Wii disc but it's a data disc, not a game disc.
+- **libdi + libiso9660** (in libogc): let your own app read data files off a burned ISO9660 DVD
+  at runtime (mount `dvd:/`). Needs AHBPROT or DVDx. Useful if your game streams assets from
+  the disc rather than booting from it.
 
 ## Sources
 
-- [wii.hacks.guide](https://wii.hacks.guide/) and its [Get Started page](https://wii.hacks.guide/get-started)
-- [WiiBrew: DVDx](http://wiibrew.org/wiki/DVDx)
-- [ConsoleMods: Wii modchips](https://consolemods.org/wiki/Wii:Modchips)
-- [List of Wii drivechips (fandom)](https://list.fandom.com/wiki/List_of_Wii_drivechips)
-- [wiidrives.com how-to](https://www.wiidrives.com/howto)
+- [wii.hacks.guide](https://wii.hacks.guide/) (softmod + d2x cIOS)
+- [WiiBrew: Signing bug](https://wiibrew.org/wiki/Signing_bug)
+- [WiiBrew: Wii system flaws](https://wiibrew.org/wiki/Wii_system_flaws)
+- [ConsoleMods: The Signing Bug](https://consolemods.org/wiki/Wii:The_Signing_Bug)
+- [fail0verflow 25c3: Console Hacking 2008, Wii Fail](https://marcan.st/uploads/25c3_console_hacking/)
+- [Wiimms ISO Tools: composing](https://wit.wiimm.de/info/composing.html)
+- [hackmii.com: open-source apploader / ISO template](http://hackmii.com/2008/08/open-source-apploader-iso-template/)
+- [WiiBrew: Homebrew Disc Loader](https://wiibrew.org/wiki/Homebrew_Disc_Loader)
+- [WiiBrew: libiso9660](https://wiibrew.org/wiki/Libiso9660)
+- [libogc libdi README](https://github.com/devkitPro/libogc/blob/master/libdi/README)
 - [AfterDawn: new black Wii drives can't read DVD-R](https://forums.afterdawn.com/threads/possible-that-new-black-wii-drives-can-not-read-dvd-r.713257/)
-- [GBAtemp: Help burning Wii games on DVD+R](https://gbatemp.net/threads/help-burning-wii-games-on-dvd-r.424479/)
-- [GBAtemp: How to create a DVD game Wii backup](https://gbatemp.net/threads/how-to-create-a-dvd-game-wii-backup.578992/)
-- [GBAtemp: Copying a Wii disc to DVD-R for another Wii](https://gbatemp.net/threads/how-can-i-copy-a-wii-game-disc-onto-a-dvd-r-to-be-played-on-another-wii.666354/)
-- [GBAtemp: Burning a Wii ISO for vWii](https://gbatemp.net/threads/how-to-burn-a-wii-iso-onto-a-dvd-and-play-it-on-your-vwii.665050/)
-- [GBAtemp: Black Wii D3-2 replacement](https://gbatemp.net/threads/black-wii-d3-2-replacement.198265/)
-- [GBAtemp: Wii with D3-2 drive](https://gbatemp.net/threads/wii-with-d3-2-drive.184571/)
-- [GBAtemp: How can I check if my Wii can read DVD-R backups?](https://gbatemp.net/threads/how-can-i-check-if-my-wii-can-read-dvd-r-backups.527315/)
-- [GBAtemp: Wii DVD support from Disc Channel](https://gbatemp.net/threads/wii-dvd-support-from-disc-channel.587206/page-4)
