@@ -17,7 +17,7 @@ Rough ways to tell:
 
 - Black, red and blue Wiis, and the later RVL-101 and RVL-201 models, have D3-2 or newer drives. They won't read burned discs.
 - White launch-era Wiis (RVL-001, 2006 to 2008) usually have a readable drive. Approximate serial cutoffs for D3-2 are LU7012xxxxx / LU3941xxxxx (US), LEF1128xxxxx (EU), LEH2682xxxxx (UK) and LAH1167xxxxx (AU). Serials below those are probably fine.
-- A Wii could have had its drive swapped during a repair, so the serial isn't proof. The test below is.
+- A Wii could have had its drive swapped during a repair, so the serial isn't proof. Burning one disc and trying it in USB Loader GX is the real test.
 
 If you have a D3-2 or newer, skip discs and load games from a USB drive with USB Loader GX. You can also swap in an older drive (D2B or D2C are easy to find), because every Wii drive fits every Wii.
 
